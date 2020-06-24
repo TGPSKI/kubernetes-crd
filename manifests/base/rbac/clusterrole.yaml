@@ -53,6 +53,7 @@ rules:
   resources:
   - roles
   - rolebindings
+  - clusterroles
   verbs:
   - create
   - delete
