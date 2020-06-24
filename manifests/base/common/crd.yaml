@@ -24,6 +24,12 @@ spec:
             spec:
               type: object
               x-kubernetes-preserve-unknown-fields: true
+              properties:
+                clusterRoleBindNamespaces:
+                  type: array
+                  nullable: true
+                  items:
+                    type: string
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true
