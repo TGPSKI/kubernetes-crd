@@ -60,7 +60,6 @@ async def create_chaos_experiment(
     if role_tpl:
         if not keep_resources_on_delete:
             kopf.adopt(role_tpl, owner=body)
-            await update_role(v1rbac, ns, role_tpl)
         logger.info(f"Created role")
 
     role_binding_tpl = await create_role_binding(
@@ -493,7 +492,6 @@ def create_role(api: client.RbacAuthorizationV1Api, configmap: Resource,
         role_name = tpl["metadata"]["name"]
         role_name = f"{role_name}-{name_suffix}"
         tpl["metadata"]["name"] = role_name
-        set_ns(tpl, ns)
 
         # when a PSP is defined, we add a rule to use that PSP
         if psp:
@@ -505,16 +503,16 @@ def create_role(api: client.RbacAuthorizationV1Api, configmap: Resource,
             set_rule_psp_name(psp_rule, psp.metadata.name)
             tpl["rules"].append(psp_rule)
 
-        logger.debug(f"Creating role with template:\n{tpl}")
+        logger.debug(f"Creating cluster role with template:\n{tpl}")
         try:
-            api.create_namespaced_role(body=tpl, namespace=ns)
+            api.create_cluster_role(body=tpl)
             return tpl
         except ApiException as e:
             if e.status == 409:
-                logger.info(f"Role '{role_name}' already exists.")
+                logger.info(f"Cluster role '{role_name}' already exists.")
             else:
                 raise kopf.PermanentError(
-                    f"Failed to create role: {str(e)}")
+                    f"Failed to create cluster role: {str(e)}")
 
 
 @run_async
@@ -523,6 +521,8 @@ def create_role_binding(api: client.RbacAuthorizationV1Api,
                         name_suffix: str):
     logger = logging.getLogger('kopf.objects')
     role_bind_name = cro_spec.get("role", {}).get("bind")
+    cluster_role_bind_namespaces = cro_spec.get("clusterRoleBindNamespaces",
+                                                [])
     if not role_bind_name:
         tpl = yaml.safe_load(configmap.data['chaostoolkit-role-binding.yaml'])
         role_binding_name = tpl["metadata"]["name"]
@@ -542,8 +542,24 @@ def create_role_binding(api: client.RbacAuthorizationV1Api,
         role_name = f"{role_name}-{name_suffix}"
         tpl["roleRef"]["name"] = role_name
 
-        set_ns(tpl, ns)
         logger.debug(f"Creating role binding with template:\n{tpl}")
+
+        if len(cluster_role_bind_namespaces) > 0:
+            cluster_tpl = tpl
+            for namespace in cluster_role_bind_namespaces:
+                set_ns(cluster_tpl, namespace)
+                try:
+                    api.create_namespaced_role_binding(body=cluster_tpl,
+                                                       namespace=namespace)
+                except ApiException as e:
+                    if e.status == 409:
+                        logger.info(f"Role binding '{role_binding_name}' \
+                                      already exists in {namespace}.")
+                    else:
+                        raise kopf.PermanentError(
+                         f"Failed to bind to role: {str(e)}")
+
+        set_ns(tpl, ns)
         try:
             api.create_namespaced_role_binding(body=tpl, namespace=ns)
             return tpl
